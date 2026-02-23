@@ -1,0 +1,71 @@
+# ==============================================================================
+# Vicsek Model - Collective Flocking Example
+# ==============================================================================
+# Particles align with neighbors + noise, leading to order-disorder transition
+# At low noise: ordered flocking (Phi -> 1)
+# At high noise: disordered motion (Phi -> 0)
+# ==============================================================================
+
+# ----- Initialization -----
+units lj
+dimension 2
+atom_style sphere
+boundary p p p
+
+# ----- System Parameters -----
+variable N equal 500         # Number of particles
+variable L equal 20          # Box size (density rho = N/L^2 = 1.25)
+variable v0 equal 0.5        # Swimming speed
+variable Dr equal 0.1        # Alignment noise (try 0.01-1.0 for phase diagram)
+variable Rcut equal 1.0      # Alignment radius
+variable align equal 5.0     # Alignment strength
+variable dt equal 0.01       # Timestep
+
+# ----- Create Simulation Box -----
+region box block 0 ${L} 0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms 1 random ${N} 12345 box
+
+# ----- Particle Properties -----
+mass 1 1.0
+set type 1 diameter 0.5
+
+# ----- No Pair Interactions (point particles) -----
+pair_style none
+
+# ----- Vicsek Alignment Dynamics -----
+fix vicsek all active vicsek v0 ${v0} Dr ${Dr} Rcut ${Rcut} alignment ${align} seed 11111
+fix integrate all nve
+
+# ----- Order Parameter Calculation -----
+# Phi = |sum(v_i)| / (N * v0)
+compute vx_all all reduce sum vx
+compute vy_all all reduce sum vy
+variable phi equal sqrt(c_vx_all^2+c_vy_all^2)/(${N}*${v0})
+
+# ----- Output Settings -----
+thermo_style custom step v_phi c_vx_all c_vy_all
+thermo 100
+
+# Save order parameter time series
+fix phi_out all ave/time 10 10 100 v_phi file vicsek_phi.dat
+
+# Trajectory dump
+dump traj all custom 1000 vicsek_traj.dump id type x y z vx vy
+
+# ----- Run Simulation -----
+timestep ${dt}
+run 100000
+
+# ----- Phase Diagram Instructions -----
+# To generate phase diagram, run multiple simulations with different Dr:
+#
+# for Dr in 0.01 0.05 0.1 0.2 0.5 1.0 2.0 5.0:
+#     lmp -var Dr ${Dr} -in vicsek_flocking.in
+#
+# Then plot <Phi> vs Dr to see the order-disorder transition
+#
+# Expected results:
+# - Dr < 0.2: Ordered phase (Phi > 0.7)
+# - Dr ~ 1.0: Transition region
+# - Dr > 2.0: Disordered phase (Phi < 0.3)

@@ -1,0 +1,61 @@
+# ==============================================================================
+# Active Brownian Particles (ABP) - Basic Example
+# ==============================================================================
+# This script simulates 1000 ABP in 2D and measures the mean-square displacement
+# Expected behavior: MSD transitions from ballistic (t^2) to diffusive (t)
+# Crossover time: tau_r = 1/Dr = 10 (with Dr = 0.1)
+# ==============================================================================
+
+# ----- Initialization -----
+units lj
+dimension 2
+atom_style sphere
+boundary p p p
+
+# ----- System Parameters -----
+variable L equal 50          # Box size
+variable N equal 1000        # Number of particles
+variable v0 equal 1.0        # Self-propulsion speed
+variable Dr equal 0.1        # Rotational diffusion
+variable Dt equal 0.01       # Translational diffusion
+variable dt equal 0.001      # Timestep
+variable runtime equal 500000
+
+# ----- Create Simulation Box -----
+region box block 0 ${L} 0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms 1 random ${N} 12345 box
+
+# ----- Particle Properties -----
+mass 1 1.0
+set type 1 diameter 1.0
+
+# ----- Pair Interactions (soft repulsion) -----
+pair_style soft 1.12246
+pair_coeff 1 1 100.0 1.12246
+
+# ----- Active Matter Dynamics -----
+fix abp all active abp v0 ${v0} Dr ${Dr} Dt ${Dt} seed 54321
+fix integrate all nve
+
+# ----- Compute MSD -----
+compute msd all msd
+
+# ----- Output Settings -----
+thermo_style custom step temp c_msd[1] c_msd[2] c_msd[4]
+thermo 1000
+
+# Save MSD data to file
+fix msd_out all ave/time 100 10 1000 c_msd[4] file abp_msd.dat
+
+# Trajectory dump
+dump traj all custom 10000 abp_traj.dump id type x y z
+
+# ----- Run Simulation -----
+timestep ${dt}
+run ${runtime}
+
+# ----- Post-processing Notes -----
+# Expected effective diffusion: D_eff = Dt + v0^2/(2*Dr) = 0.01 + 1/(0.2) = 5.01
+# MSD slope at long times: 4*D_eff = 20.04 (for 2D)
+# Crossover time: tau_r = 1/Dr = 10

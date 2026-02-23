@@ -1,0 +1,80 @@
+# ==============================================================================
+# Motility-Induced Phase Separation (MIPS) Example
+# ==============================================================================
+# High-activity ABP system showing spontaneous phase separation
+# Peclet number Pe = v0/(sigma*Dr) ~ 13 with v0=40, Dr=3, sigma=1
+# This should show clustering behavior characteristic of MIPS
+# ==============================================================================
+
+# ----- Initialization -----
+units lj
+dimension 2
+atom_style sphere
+boundary p p p
+
+# ----- System Parameters -----
+variable N equal 2500        # Number of particles
+variable phi equal 0.4       # Packing fraction
+variable sigma equal 1.0     # Particle diameter
+variable v0 equal 40.0       # High self-propulsion speed
+variable Dr equal 3.0        # Rotational diffusion
+variable dt equal 0.0001     # Small timestep for stability
+
+# Calculate box size for desired packing fraction
+# phi = N * pi * (sigma/2)^2 / L^2
+# L = sqrt(N * pi * (sigma/2)^2 / phi)
+variable L equal sqrt(${N}*PI*0.25/${phi})
+
+# ----- Create Simulation Box -----
+region box block 0 ${L} 0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms 1 random ${N} 12345 box
+
+# ----- Particle Properties -----
+mass 1 1.0
+set type 1 diameter ${sigma}
+
+# ----- WCA Potential (purely repulsive) -----
+pair_style lj/cut 1.12246
+pair_coeff 1 1 1.0 ${sigma} 1.12246
+pair_modify shift yes
+
+# ----- Active MIPS Dynamics -----
+fix mips all active mips v0 ${v0} Dr ${Dr} seed 99999
+fix integrate all nve
+
+# ----- Coordination Number (for cluster analysis) -----
+compute coord all coord/atom cutoff 1.5
+
+# ----- Output Settings -----
+thermo_style custom step temp pe ke
+thermo 5000
+
+# Trajectory with coordination numbers
+dump traj all custom 10000 mips_traj.dump id type x y z c_coord
+
+# ----- Equilibration (without activity) -----
+# First equilibrate the system positions
+print "Equilibrating without activity..."
+unfix mips
+fix langevin_eq all langevin 1.0 1.0 0.1 12345
+run 10000
+unfix langevin_eq
+
+# ----- Production Run (with activity) -----
+print "Starting MIPS production run..."
+fix mips all active mips v0 ${v0} Dr ${Dr} seed 99999
+
+timestep ${dt}
+run 1000000
+
+# ----- Analysis Notes -----
+# Look for:
+# 1. Bimodal distribution of coordination numbers
+# 2. Dense clusters (red) coexisting with dilute gas (blue)
+# 3. Cluster growth and coarsening over time
+#
+# To analyze:
+# - Plot histogram of coordination numbers
+# - Calculate local density maps
+# - Track cluster size distribution

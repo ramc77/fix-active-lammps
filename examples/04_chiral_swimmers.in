@@ -1,0 +1,68 @@
+# ==============================================================================
+# Chiral Active Brownian Particles (Circle Swimmers)
+# ==============================================================================
+# Particles swim in circles due to intrinsic angular velocity omega
+# Circle radius: R = v0/|omega|
+# Reduced diffusion due to circular confinement
+# ==============================================================================
+
+# ----- Initialization -----
+units lj
+dimension 2
+atom_style sphere
+boundary p p p
+
+# ----- System Parameters -----
+variable N equal 500
+variable L equal 50
+variable v0 equal 1.0        # Self-propulsion speed
+variable Dr equal 0.1        # Rotational diffusion
+variable omega equal 0.5     # Angular velocity (chirality)
+variable dt equal 0.001
+
+# Circle radius = v0/omega = 2.0
+# Effective diffusion reduced by factor (Dr^2 + omega^2)/Dr^2
+
+# ----- Create Simulation Box -----
+region box block 0 ${L} 0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms 1 random ${N} 12345 box
+
+# ----- Particle Properties -----
+mass 1 1.0
+set type 1 diameter 1.0
+
+# ----- Soft Interactions -----
+pair_style soft 1.12246
+pair_coeff 1 1 100.0 1.12246
+
+# ----- Chiral ABP Dynamics -----
+fix chiral all active chiral v0 ${v0} Dr ${Dr} omega ${omega} seed 22222
+fix integrate all nve
+
+# ----- Compute MSD -----
+compute msd all msd
+
+# ----- Output -----
+thermo_style custom step temp c_msd[4]
+thermo 1000
+
+fix msd_out all ave/time 100 10 1000 c_msd[4] file chiral_msd.dat
+
+dump traj all custom 5000 chiral_traj.dump id type x y z
+
+# ----- Run -----
+timestep ${dt}
+run 500000
+
+# ----- Analysis Notes -----
+# Without chirality (omega=0):
+#   D_eff = Dt + v0^2/(2*Dr) = 0 + 1/(0.2) = 5.0
+#
+# With chirality (omega=0.5):
+#   D_active = v0^2 * Dr / (2*(Dr^2 + omega^2))
+#            = 1 * 0.1 / (2*(0.01 + 0.25))
+#            = 0.1 / 0.52 = 0.192
+#
+# MSD slope at long times: 4 * D_active = 0.77
+# (Much smaller than ABP without chirality!)

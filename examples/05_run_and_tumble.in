@@ -1,0 +1,64 @@
+# ==============================================================================
+# Run-and-Tumble Particles (Bacterial Motion)
+# ==============================================================================
+# Particles run straight then randomly reorient (tumble) at rate alpha
+# Inspired by E. coli motility
+# Mean run time: tau_p = 1/alpha
+# ==============================================================================
+
+# ----- Initialization -----
+units lj
+dimension 2
+atom_style sphere
+boundary p p p
+
+# ----- System Parameters -----
+variable N equal 1000
+variable L equal 50
+variable v0 equal 1.0         # Run speed
+variable alpha equal 0.1      # Tumble rate (1/time)
+variable dt equal 0.001
+
+# Mean run time = 1/alpha = 10
+# Mean run length = v0/alpha = 10
+
+# ----- Create Simulation Box -----
+region box block 0 ${L} 0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms 1 random ${N} 12345 box
+
+# ----- Particle Properties -----
+mass 1 1.0
+set type 1 diameter 1.0
+
+# ----- Soft Interactions -----
+pair_style soft 1.12246
+pair_coeff 1 1 100.0 1.12246
+
+# ----- Run-and-Tumble Dynamics -----
+fix rtp all active rtp v0 ${v0} tumble_rate ${alpha} seed 33333
+fix integrate all nve
+
+# ----- Compute MSD -----
+compute msd all msd
+
+# ----- Output -----
+thermo_style custom step temp c_msd[4]
+thermo 1000
+
+fix msd_out all ave/time 100 10 1000 c_msd[4] file rtp_msd.dat
+
+dump traj all custom 5000 rtp_traj.dump id type x y z vx vy
+
+# ----- Run -----
+timestep ${dt}
+run 500000
+
+# ----- Analysis Notes -----
+# Effective diffusion: D_eff = v0^2 / (d * alpha) = 1 / (2 * 0.1) = 5.0
+# MSD slope at long times: 4 * D_eff = 20.0
+#
+# To verify Poisson tumbling:
+# - Track individual particle orientations
+# - Histogram of run durations should be exponential: P(t) = alpha * exp(-alpha*t)
+# - Mean run duration should be 1/alpha = 10

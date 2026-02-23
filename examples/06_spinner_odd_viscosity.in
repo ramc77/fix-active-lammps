@@ -1,0 +1,70 @@
+# ==============================================================================
+# Spinner Particles with Odd Viscosity
+# ==============================================================================
+# Spinning particles exhibit Hall-like transverse response to applied force
+# Hall angle: tan(theta) = eta_odd * omega / gamma
+# ==============================================================================
+
+# ----- Initialization -----
+units lj
+dimension 2
+atom_style sphere
+boundary p p p
+
+# ----- System Parameters -----
+variable N equal 100
+variable L equal 20
+variable omega_spin equal 10.0   # Spinning frequency
+variable eta_odd equal 1.0       # Odd viscosity coefficient
+variable gamma equal 10.0        # Friction coefficient
+variable Fext equal 1.0          # External force in x-direction
+variable dt equal 0.001
+
+# Expected Hall angle: tan(theta) = eta_odd * omega / gamma = 1*10/10 = 1
+# This means 45 degree deflection!
+
+# ----- Create Simulation Box -----
+region box block 0 ${L} 0 ${L} -0.5 0.5
+create_box 1 box
+create_atoms 1 random ${N} 12345 box
+
+# ----- Particle Properties -----
+mass 1 1.0
+set type 1 diameter 1.0
+
+# ----- No Pair Interactions -----
+pair_style none
+
+# ----- Spinner Dynamics with Odd Viscosity -----
+fix spinner all active spinner omega_spin ${omega_spin} eta_odd ${eta_odd} gamma ${gamma}
+fix integrate all nve
+
+# ----- Apply External Force -----
+# Constant force in x-direction
+fix push all addforce ${Fext} 0.0 0.0
+
+# ----- Track Velocities -----
+compute vx_avg all reduce ave vx
+compute vy_avg all reduce ave vy
+
+# ----- Output -----
+thermo_style custom step c_vx_avg c_vy_avg
+thermo 100
+
+# Save velocity time series
+fix vel_out all ave/time 10 10 100 c_vx_avg c_vy_avg file spinner_velocity.dat
+
+dump traj all custom 1000 spinner_traj.dump id type x y z vx vy
+
+# ----- Run -----
+timestep ${dt}
+run 50000
+
+# ----- Analysis Notes -----
+# At steady state:
+#   vx = Fext / gamma = 0.1
+#   vy = (eta_odd * omega / gamma) * vx = 1 * 0.1 = 0.1
+#
+# Hall angle: arctan(vy/vx) = arctan(1) = 45 degrees
+#
+# This demonstrates odd viscosity: force in x produces motion in y!

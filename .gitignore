@@ -1,0 +1,48 @@
+# Compiled files
+*.o
+*.a
+*.so
+*.exe
+lmp_*
+
+# LAMMPS output files
+*.dump
+*.lammpstrj
+*.data
+*.restart
+log.lammps
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Data files
+*.dat
+*.csv
+*.npy
+*.npz
+
+# Plots (keep example plots)
+# *.png
+# *.pdf
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build directories
+build/
+dist/
