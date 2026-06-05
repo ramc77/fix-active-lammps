@@ -30,12 +30,25 @@ class FixActive : public Fix {
   ~FixActive() override;
   int setmask() override;
   void init() override;
+  void init_list(int, class NeighList *) override;
   void setup(int) override;
   void post_force(int) override;
   double memory_usage() override;
 
+  void grow_arrays(int) override;
+  void copy_arrays(int, int, int) override;
+  int pack_exchange(int, double *) override;
+  int unpack_exchange(int, double *) override;
+
+  // Forward-communicate per-atom orientation to ghost atoms so that the
+  // Vicsek and nematic alignment kernels see the orientations of neighbours
+  // owned by other MPI ranks.  Without this, alignment partners across
+  // subdomain boundaries are silently dropped.
+  int pack_forward_comm(int, int *, double *, int, int *) override;
+  void unpack_forward_comm(int, int, double *) override;
+
  private:
-  
+
   enum ActiveModel {
     ABP,
     AOUP,
@@ -50,35 +63,40 @@ class FixActive : public Fix {
   };
   ActiveModel model;
 
-  
-  double v0;          
-  double Dr;          
-  double Dt;           
-  int seed;           
-  int dimension;       
+  // common parameters
+  double v0;
+  double Dr;
+  double Dt;
+  int seed;
+  int dimension;
 
-  
-  double omega;        
-  double tumble_rate; 
-  double Rcut;         
-  double alignment;    
-  double aspect;       
-  double omega_spin;   
-  double eta_odd;      
-  double gamma;        
-  double mass;         
-  double tau;          
-  double Da;           
-  double activity;     
-  double K;           
+  // model specific
+  double omega;          // chiral angular velocity
+  double tumble_rate;    // RTP Poisson rate
+  double Rcut;           // alignment / density cutoff (Vicsek, MIPS, Nematic)
+  double alignment;      // Vicsek alignment strength in [0,1]
+  double aspect;         // rod mobility anisotropy mu_par / mu_perp
+  double omega_spin;     // spinner angular velocity
+  double eta_odd;        // odd (Hall) viscosity
+  double gamma;          // friction coefficient
+  double mass_iabp;      // IABP particle mass (only used to scale noise FDT)
+  double tau;            // AOUP persistence time
+  double Da;             // AOUP active diffusion amplitude
+  double activity;       // active nematic stress amplitude
+  double K;              // nematic alignment stiffness
+  double kT;             // thermal energy for IABP fluctuation-dissipation
+  double rho_max;        // MIPS density at which v(rho) -> 0
 
-  
-  double **theta;      
-  double **quat;       
-  double **va;         
+  // per-atom storage
+  int nmax_alloc;
+  double **theta;        // 2D orientation angle [nmax][1]
+  double **quat;         // 3D quaternion [nmax][4]
+  double **va;           // AOUP active velocity [nmax][3]
 
   class RanMars *random;
+  class NeighList *list;
 
+  // model implementations
   void compute_abp();
   void compute_aoup();
   void compute_chiral();
@@ -89,14 +107,9 @@ class FixActive : public Fix {
   void compute_iabp();
   void compute_mips();
   void compute_nematic();
-
-  void update_orientation_2d(int);
-  void update_orientation_3d(int);
-  void tumble(int);
-  void align_with_neighbors(int);
 };
 
-} 
+}
 
 #endif
 #endif

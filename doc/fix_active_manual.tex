@@ -1,0 +1,475 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!60!black,
+            citecolor=black,filecolor=black,pdftitle={fix active manual}}
+\usepackage{titlesec}
+\titleformat*{\section}{\large\bfseries}
+\titleformat*{\subsection}{\normalsize\bfseries}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{gray!50},
+  backgroundcolor=\color{gray!4},
+  columns=fullflexible,
+  showstringspaces=false,
+  keepspaces=true,
+  aboveskip=8pt,
+  belowskip=8pt,
+}
+
+\title{\texttt{fix active}: A LAMMPS Package for Ten Active-Matter Models\\[6pt]
+       \large User Manual and Tutorial}
+\author{Ram Chand \and Saqia Bukhari\\[4pt]
+        The Begum Nusrat Bhutto Women University, Sukkur, Pakistan}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+\noindent\hrulefill
+
+\section{Overview}
+
+\texttt{fix active} is a single LAMMPS fix that implements ten active-matter
+self-propulsion models inside a uniform input-script interface.  Each model
+is a distinct \texttt{compute\_<model>()} kernel registered in the fix's
+\texttt{post\_force} callback; no kernel re-uses another model's update
+routine.  The supported models are:
+
+\begin{center}
+\begin{tabular}{l l}
+\toprule
+keyword       & model \\
+\midrule
+\texttt{abp}      & Active Brownian Particles \\
+\texttt{aoup}     & Active Ornstein--Uhlenbeck Particles \\
+\texttt{chiral}   & Chiral ABP (intrinsic angular velocity $\omega_0$) \\
+\texttt{rtp}      & Run-and-Tumble Particles \\
+\texttt{vicsek}   & Vicsek-type polar alignment \\
+\texttt{rod}      & Active rod with anisotropic friction \\
+\texttt{spinner}  & Chiral spinner with odd (Hall) viscosity \\
+\texttt{iabp}     & Inertial ABP \\
+\texttt{mips}     & Motility-Induced Phase Separation (Cates--Tailleur quorum sensing) \\
+\texttt{nematic}  & Active nematic with apolar $Q$-tensor torque \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The current release applies the active force in the $xy$-plane (2D systems,
+or 3D boxes confined to a plane).  Per-atom orientation, the AOUP active
+velocity, and a quaternion scaffold for a future 3D update are all
+registered for MPI atom exchange, ghost forward-communication, and the
+periodic atom-sort callback, so the framework is correct under arbitrary
+spatial domain decomposition.
+
+\section{Installation}
+
+\subsection{Prerequisites}
+A working LAMMPS build environment.  Any LAMMPS version from $\sim$2022
+onward is supported.  No additional LAMMPS package is required.
+
+\subsection{Source files}
+Copy two files into the LAMMPS source tree:
+\begin{lstlisting}
+cp src/fix_active.cpp  $LAMMPS_ROOT/src/
+cp src/fix_active.h    $LAMMPS_ROOT/src/
+\end{lstlisting}
+
+\subsection{CMake build}
+\begin{lstlisting}
+cd $LAMMPS_ROOT
+mkdir -p build && cd build
+cmake -D BUILD_MPI=ON ../cmake
+make -j8 lmp
+\end{lstlisting}
+
+\subsection{Traditional Makefile build}
+From the LAMMPS \texttt{src/} directory:
+\begin{lstlisting}
+make mpi -j8
+\end{lstlisting}
+
+\subsection{Verification}
+Run any of the input scripts in \texttt{examples/} (or the benchmarks shipped
+with the manuscript repository).  A successful invocation prints the
+banner line\\
+\texttt{fix\ ID\ group\ active\ <model>\ \dots} in the
+\texttt{log.lammps} echo of the input.
+
+\section{Common syntax}
+
+\begin{lstlisting}
+fix ID group active <model> keyword value [keyword value ...]
+\end{lstlisting}
+
+\begin{itemize}
+\item \textbf{ID}: user-assigned fix identifier (LAMMPS standard).
+\item \textbf{group}: atom group to which the active force is applied.
+\item \textbf{model}: one of the ten keywords listed in Sec.~1.
+\item \textbf{keyword value pairs}: order-independent.  Unrecognised
+      keywords are flagged as errors; keywords that are recognised but not
+      consumed by the chosen model are silently ignored (handy for sweeping
+      a single template script over multiple models).
+\end{itemize}
+
+\noindent
+Global keywords that any model may accept (defaults in parentheses):
+\begin{center}
+\begin{tabular}{l l l}
+\toprule
+keyword & meaning & default \\
+\midrule
+\texttt{v0}        & self-propulsion speed                   & $1.0$ \\
+\texttt{Dr}        & rotational diffusion coefficient        & $0.1$ \\
+\texttt{Dt}        & translational diffusion coefficient     & $0.0$ \\
+\texttt{gamma}     & friction $\gamma$ used by the force prefactor & $1.0$ \\
+\texttt{kT}        & thermal energy (for self-Langevin kernels) & $1.0$ \\
+\texttt{seed}      & RNG seed (per-rank seed = \texttt{seed}$+$rank) & $12345$ \\
+\texttt{dimension} & override \texttt{domain->dimension} (rarely needed)    & box dim. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+\textbf{Combination rules.}  The active force is added in
+\texttt{post\_force}.  Two of the kernels supply their own Stokes drag and
+fluctuation--dissipation noise and \emph{must not} be combined with
+\texttt{fix langevin} or \texttt{fix brownian}:
+
+\begin{itemize}
+\item \texttt{rod}  -- self-contained anisotropic Langevin.  Use with \texttt{fix nve} only.
+\item \texttt{iabp} -- self-contained inertial Langevin.  Use with \texttt{fix nve} only.
+\end{itemize}
+
+\noindent
+All other kernels (\texttt{abp}, \texttt{aoup}, \texttt{chiral}, \texttt{rtp},
+\texttt{vicsek}, \texttt{spinner}, \texttt{mips}, \texttt{nematic}) add only
+the active force; for a complete overdamped Langevin integrator combine
+with \texttt{fix nve + fix langevin} (or \texttt{fix nve + fix brownian} on
+LAMMPS versions where it is available).
+
+\section{Models in detail}
+
+\subsection{Active Brownian Particles (\texttt{abp})}
+Overdamped self-propelled disks.  Per-atom EoMs:
+\begin{align*}
+\dot{\mathbf r}_i &= v_0\hat{\mathbf e}_i + \mu \mathbf F_i + \sqrt{2D_t}\,\boldsymbol\xi_i^{t}, \\
+\dot\theta_i &= \sqrt{2D_r}\,\xi_i^{r}.
+\end{align*}
+The fix adds the force $\mathbf F_i^{\rm act} = \gamma v_0(\cos\theta_i,\sin\theta_i,0)$,
+so the terminal speed is $v_0$ when combined with \texttt{fix langevin}
+with damping $\gamma_{\rm lang}=\gamma$.
+
+\noindent
+\textbf{Keywords:} \texttt{v0 Dr [Dt] [gamma] [seed]}\\
+\textbf{Long-time MSD (2D):}\quad
+$\langle\Delta r^2(t)\rangle\xrightarrow{t\gg\tau_r} 4D_{\rm eff}t$,
+$\;D_{\rm eff}=D_t+v_0^2/(2D_r)$,\; $\tau_r=1/D_r$.
+
+\begin{lstlisting}
+fix 1 active_atoms active abp v0 1.0 Dr 0.1 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Active Ornstein--Uhlenbeck Particles (\texttt{aoup})}
+Replaces the discrete orientation by a coloured-noise active velocity
+$\mathbf v_i^{a}$:
+\[
+\dot{\mathbf r}_i = \mu\mathbf F_i + \mathbf v_i^{a},\qquad
+\dot{\mathbf v}_i^{a} = -\tau^{-1}\mathbf v_i^{a} + \sqrt{2D_a/\tau}\,\boldsymbol\eta_i .
+\]
+The kernel uses the \emph{exact} OU propagator
+$\mathbf v_i^{a}(t+\Delta t)=e^{-\Delta t/\tau}\mathbf v_i^{a}(t)
++\sqrt{D_a(1-e^{-2\Delta t/\tau})}\,\mathbf Z_i$.\\
+\textbf{Keywords:} \texttt{Da tau [gamma] [seed]}\\
+\textbf{ABP-equivalent parameters (2D):}\quad
+$\tau=1/D_r,\;D_a=v_0^2/2$ gives the same long-time diffusion as ABP.
+
+\begin{lstlisting}
+fix 1 active_atoms active aoup Da 0.5 tau 10.0 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Chiral ABP (\texttt{chiral})}
+ABP with deterministic angular drift $\omega_0$:
+$\dot\theta_i = \omega_0 + \sqrt{2D_r}\,\xi_i$.  Trajectories are circular
+of radius $v_0/|\omega_0|$ at short times.\\
+\textbf{Keywords:} \texttt{v0 Dr omega [gamma] [seed]}\\
+\textbf{Long-time diffusion (2D):}\quad
+$D_{\rm eff}^{\rm chiral}=D_t + v_0^2 D_r/[2(D_r^2+\omega_0^2)]$.
+
+\begin{lstlisting}
+fix 1 active_atoms active chiral v0 1.0 Dr 0.1 omega 0.5 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Run-and-Tumble Particles (\texttt{rtp})}
+Ballistic ``runs'' at $v_0$ punctuated by instantaneous tumbles drawn from a
+Poisson process of rate \texttt{tumble\_rate}.  No continuous angular
+diffusion.\\
+\textbf{Keywords:} \texttt{v0 tumble\_rate [Dt] [gamma] [seed]}\\
+\textbf{Long-time diffusion (2D):}\quad
+$D_{\rm eff}^{\rm RTP}=D_t+v_0^2/(d\,\alpha)$, $d=$ spatial dimension.
+
+\begin{lstlisting}
+fix 1 active_atoms active rtp v0 1.0 tumble_rate 0.1 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Vicsek-type alignment (\texttt{vicsek})}
+Each particle aligns toward the circular mean of its neighbours within a
+cutoff \texttt{Rcut}.  The blend between own axis and neighbour mean is
+done on the unit circle (well-defined across $\pm\pi$):
+\begin{align*}
+(\cos\theta_i,\sin\theta_i)\;&\leftarrow\;(1-\alpha)\,(\cos\theta_i,\sin\theta_i)
+\;+\;\alpha\,\bigl(\overline{\cos\theta},\,\overline{\sin\theta}\bigr)\,, \\
+\theta_i^{\rm new}\;&=\;\mathrm{atan2}(\sin_{\rm blend},\cos_{\rm blend})
++ \sqrt{2D_r\Delta t}\,\xi_i .
+\end{align*}
+With $\alpha=1$ (default) this recovers the standard Vicsek mean.\\
+\textbf{Keywords:} \texttt{v0 Dr Rcut [alignment] [gamma] [seed]}\\
+\textbf{Parallel note:} per-atom $\theta$ is forward-communicated to ghosts,
+so the alignment kernel is correct under spatial decomposition.
+
+\begin{lstlisting}
+fix 1 active_atoms active vicsek v0 1.0 Dr 0.1 Rcut 1.0 alignment 1.0 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Active rod (\texttt{rod})}
+Anisotropic-friction self-propelled rod with self-contained Langevin
+integrator.  Parallel/perpendicular frictions
+$\gamma_\parallel=\gamma/\mathrm{aspect}$, $\gamma_\perp=\gamma$; the kernel
+applies its own $-\gamma_{\parallel,\perp}v$ drag, $\sqrt{2\gamma k_BT/\Delta t}$
+noise, and a deterministic propulsion $\gamma_\parallel v_0\hat{\mathbf e}_i$.
+Aligning torque is computed from the external force present in
+\texttt{atom->f} at entry to \texttt{post\_force}.
+
+\noindent
+\textbf{Keywords:} \texttt{v0 Dr aspect [kT] [gamma] [seed]}\\
+\textbf{Combine with:} \texttt{fix nve} only.
+
+\begin{lstlisting}
+fix 1 rod_atoms active rod v0 1.0 Dr 0.1 aspect 2.0 gamma 1.0 kT 0.01 seed 54321
+\end{lstlisting}
+
+\subsection{Spinner with odd viscosity (\texttt{spinner})}
+Adds the Hall force $\mathbf F_{\rm odd}=\eta_{\rm odd}\omega_{\rm spin}(\hat{\mathbf z}\times\mathbf v)$.
+The frictional drag $\gamma$ that enters the Hall-angle prediction
+$\tan\phi=\eta_{\rm odd}\omega_{\rm spin}/\gamma$ comes from a companion
+\texttt{fix langevin} ($\gamma=m/\mathrm{Tdamp}$); the spinner kernel does
+not duplicate that drag.\\
+\textbf{Keywords:} \texttt{omega\_spin eta\_odd [seed]}\\
+\textbf{Combine with:} \texttt{fix nve + fix langevin}.
+
+\begin{lstlisting}
+fix nve_int  spin_atoms nve
+fix drag     spin_atoms langevin 0.0 0.0 1.0 99999   # Tdamp = 1 -> gamma = 1
+fix active1  spin_atoms active spinner omega_spin 1.0 eta_odd 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Inertial ABP (\texttt{iabp})}
+Massive ABP with self-contained inertial Langevin:
+$m\ddot{\mathbf r}_i = -\gamma\dot{\mathbf r}_i + \gamma v_0\hat{\mathbf e}_i
++\sqrt{2\gamma k_BT}\,\boldsymbol\xi_i$.  Stokes number
+$\mathrm{St}=mD_r/\gamma$.\\
+\textbf{Keywords:} \texttt{v0 Dr gamma kT [seed]}\\
+\textbf{Combine with:} \texttt{fix nve} only.
+
+\begin{lstlisting}
+fix 1 iabp_atoms active iabp v0 1.0 Dr 0.1 gamma 10.0 kT 0.1 seed 54321
+\end{lstlisting}
+
+\subsection{Motility-Induced Phase Separation (\texttt{mips})}
+Cates--Tailleur quorum-sensing realisation: the swim speed depends on the
+local density,
+\[
+v(\rho_i)=v_0\max\!\bigl(1-\rho_i/\rho_{\rm max},\,0\bigr).
+\]
+The local density $\rho_i$ is estimated from the neighbour count inside a
+ball of radius \texttt{Rcut}.\\
+\textbf{Keywords:} \texttt{v0 Dr Rcut rho\_max [gamma] [seed]}\\
+\textbf{Combine with:} \texttt{fix nve + fix langevin + pair\_style soft/lj/cut}.
+
+\begin{lstlisting}
+pair_style lj/cut 1.122462
+pair_coeff * * 1.0 1.0 1.122462
+fix 1 mips_atoms active mips v0 30.0 Dr 0.05 Rcut 1.5 rho_max 1.0 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\subsection{Active nematic (\texttt{nematic})}
+Dry, particle-based active nematic.  Local $Q$-tensor over neighbours
+within \texttt{Rcut}, director angle
+$\phi_i=\tfrac12\arctan(2Q_{xy}/Q_{xx})$, apolar alignment torque
+$-K\sin 2(\theta_i-\phi_i)$, and polar self-propulsion of amplitude
+\texttt{activity} along the body axis.\\
+\textbf{Keywords:} \texttt{activity K Rcut [Dr] [gamma] [seed]}\\
+\textbf{Combine with:} \texttt{fix nve + fix langevin + pair\_style} for the
+WCA-style steric repulsion.\\
+\textbf{Parallel note:} per-atom $\theta$ forward-communicated to ghosts.
+
+\begin{lstlisting}
+fix 1 nematic_atoms active nematic activity 1.0 K 1.0 Rcut 1.5 Dr 0.05 gamma 1.0 seed 54321
+\end{lstlisting}
+
+\section{Parallel computing}
+
+The per-atom angle $\theta_i$, the AOUP active velocity $\mathbf v_i^{a}$,
+and the quaternion scaffold all follow the atom across MPI exchange (via
+overridden \texttt{pack\_exchange} / \texttt{unpack\_exchange}) and through
+the periodic atom-sort that LAMMPS performs when rebuilding neighbour
+lists (\texttt{copy\_arrays}).  In addition, the Vicsek and nematic
+kernels forward-communicate $\theta_i$ to ghost atoms at the start of each
+\texttt{post\_force} invocation via \texttt{comm\_forward = 1} and
+overridden \texttt{pack\_forward\_comm} / \texttt{unpack\_forward\_comm}.
+This is critical: without it, alignment partners across every subdomain
+boundary (\emph{including} periodic-image neighbours in serial runs)
+are silently dropped, and the apparent Vicsek transition shifts to lower
+noise.
+
+The kernels are not OpenMP-threaded.  For hybrid MPI+OpenMP runs set
+\texttt{OMP\_NUM\_THREADS=1} for the active fix and parallelise across MPI
+ranks only.
+
+\section{Worked examples}
+
+\subsection{Example 1 -- ABP MSD validation}
+
+\begin{lstlisting}
+units       lj
+dimension   2
+boundary    p p p
+atom_style  atomic
+atom_modify map array
+
+variable    N      equal 1000
+variable    L      equal 1000
+variable    v0     equal 1.0
+variable    Dr     equal 0.1
+variable    kT     equal 0.01
+
+region      box block 0 ${L} 0 ${L} -0.5 0.5
+create_box  1 box
+create_atoms 1 random ${N} 12345 box
+mass        1 1.0
+velocity    all set 0.0 0.0 0.0
+pair_style  none
+
+fix nve     all nve
+fix lang    all langevin ${kT} ${kT} 1.0 11111
+fix active1 all active abp v0 ${v0} Dr ${Dr} gamma 1.0 seed 54321
+fix enf2d   all enforce2d
+
+compute     msd all msd com no
+thermo_style custom step temp c_msd[4]
+thermo      5000
+
+fix         msdout all print 1000 "$(step*dt) $(c_msd[4])" file msd.dat &
+            screen no title "# t MSD"
+
+timestep    0.001
+run         1000000
+\end{lstlisting}
+
+\noindent
+Expected long-time slope of the MSD = $4 D_{\rm eff}=4\bigl(D_t+v_0^2/(2D_r)\bigr)\approx 20.04$
+with $D_t=k_BT/\gamma=0.01$, $v_0=1$, $D_r=0.1$.
+
+\subsection{Example 2 -- Vicsek phase diagram under MPI}
+
+\begin{lstlisting}
+mpirun -np 4 lmp -in in.vicsek_phase_diagram
+\end{lstlisting}
+The decomposition is 2$\times$2$\times$1 for a 2D box.  Across each subdomain
+boundary the new forward-comm path supplies $\theta$ on ghost atoms; the
+transition is then in $D_r\in[25,50]$ for $N=500$, $L=30$, $R_c=1$.
+
+\subsection{Example 3 -- Spinner Hall angle}
+
+\begin{lstlisting}
+fix nve_int  spin nve
+fix drag     spin langevin 0.0 0.0 1.0 99999          # gamma_lang = 1
+fix drive    spin addforce 1.0 0.0 0.0                # F_ext = (+1, 0)
+fix active1  spin active spinner omega_spin 1.0 eta_odd 1.0 seed 54321
+compute vx spin reduce ave vx
+compute vy spin reduce ave vy
+thermo_style custom step temp c_vx c_vy
+\end{lstlisting}
+Steady state: $\langle v_x\rangle=\langle v_y\rangle=\gamma F/[\gamma^2+(\eta_{\rm odd}\omega)^2]=0.5$,
+$\tan\phi = v_y/v_x = 1$.
+
+\section{Diagnostics and dump output}
+
+\texttt{fix active} does not declare any extra per-atom or scalar outputs,
+so the standard \texttt{dump custom}, \texttt{compute msd},
+\texttt{compute coord/atom}, \texttt{compute reduce}, etc.\ all work
+without modification on the simulated trajectory.  If you need the
+per-atom orientation in a dump, add a \texttt{compute property/atom}
+of \texttt{ix iy iz} (positions) and dump the velocity to recover
+$\theta_i = \mathrm{atan2}(v_y, v_x)$ in post-processing.
+
+\section{Performance}
+
+The active force is purely local for every kernel except Vicsek and
+nematic, which carry one extra forward-communication of one double per
+atom per timestep.  In a typical benchmark (10\,000 ABP particles with
+WCA interactions, single CPU core), \texttt{fix active}'s
+\texttt{post\_force} contribution is $\sim 9\%$ of the total wall time,
+dominated by the pair-force computation ($\sim 62\%$) and the neighbour-list
+rebuild ($\sim 18\%$).
+
+\section{Troubleshooting / FAQ}
+
+\paragraph{``Illegal fix active command: unknown keyword \ldots''}
+A keyword in the input deck is not in the parser's whitelist.  Check for
+typos; valid keywords are listed in the comment header of
+\texttt{src/fix\_active.cpp}.
+
+\paragraph{``fix active Rcut exceeds neighbor cutoff''}
+The alignment / density cutoff is larger than the global LAMMPS neighbour
+cutoff.  Increase the pair cutoff or the neighbour skin so that all
+neighbours within \texttt{Rcut} are included in the neighbour list.
+
+\paragraph{``fix active currently propels in the xy-plane only''}
+Warning emitted when the box is declared 3D.  The active force has no
+$z$-component; particles are free to diffuse in $z$ through whatever other
+fix you have attached.
+
+\paragraph{Hall angle is twice what I expect for the spinner.}
+You are double-counting the drag.  \texttt{fix active spinner} does
+\emph{not} add a Stokes term; the drag must come from \texttt{fix langevin}.
+If you also added \texttt{fix langevin} on top of an explicitly drag-supplying
+kernel, remove one of them.
+
+\paragraph{MSD slope wrong by a factor of 2.}
+Most likely the wrong dimensionality factor.  The 2D long-time slope is
+$4 D_{\rm eff}$; the 1D slope is $2 D_{\rm eff}$.  Also check that you are
+fitting in the diffusive regime $t\gg\tau_r$ -- a fit window of
+$[5\tau_r,\,50\tau_r]$ is recommended (well past the ballistic crossover
+but before finite-$N$ noise dominates the late-time tail).
+
+\paragraph{Different result on 1 vs 4 MPI ranks for Vicsek/nematic.}
+You are running an older \texttt{fix\_active.cpp} that does not forward-
+communicate $\theta$ to ghosts.  Pull the current version from
+\href{https://github.com/ramc77/fix-active-lammps}{the repository}.
+
+\section{Citation}
+
+If you use \texttt{fix active} in published work please cite:
+\begin{quote}\small
+Ram Chand and Saqia Bukhari, \emph{Active Matter Model Implementation in LAMMPS: A Coherent \texttt{fix active} Framework of Ten Active Self-Propulsion Mechanisms}, (manuscript, 2026).\\
+Source: \href{https://github.com/ramc77/fix-active-lammps}{github.com/ramc77/fix-active-lammps}.
+\end{quote}
+
+\section{License}
+
+\texttt{fix\_active.cpp}/\texttt{fix\_active.h} are distributed under the
+GNU General Public License v3, matching the host LAMMPS license.
+
+\end{document}
